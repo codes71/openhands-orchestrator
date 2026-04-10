@@ -1,0 +1,165 @@
+name: Implement from Research
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  check-trigger:
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.check.outputs.should_run }}
+      target_repo: ${{ steps.check.outputs.target_repo }}
+      instructions: ${{ steps.check.outputs.instructions }}
+      research_body: ${{ steps.check.outputs.research_body }}
+    steps:
+      - name: Check if this is a research issue with user instructions
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+        run: |
+          LABELS=$(gh issue view ${{ github.event.issue.number }} \
+            --repo ${{ github.repository }} \
+            --json labels --jq '.labels[].name')
+
+          if echo "$LABELS" | grep -q "research"; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "${{ github.event.comment.user.login }}" = "github-actions[bot]" ]; then
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          TARGET=$(echo "$LABELS" | grep -vE '^(research|implemented|release-monitor|codebase-analysis)$' | head -1)
+          echo "target_repo=codes71/${TARGET}" >> "$GITHUB_OUTPUT"
+
+          INSTRUCTIONS=$(jq -r '.comment.body' "$GITHUB_EVENT_PATH")
+          echo "instructions<<INSTEOF" >> "$GITHUB_OUTPUT"
+          echo "$INSTRUCTIONS" >> "$GITHUB_OUTPUT"
+          echo "INSTEOF" >> "$GITHUB_OUTPUT"
+
+          BODY=$(gh issue view ${{ github.event.issue.number }} \
+            --repo ${{ github.repository }} \
+            --json body --jq '.body')
+          echo "research_body<<BODYEOF" >> "$GITHUB_OUTPUT"
+          echo "$BODY" >> "$GITHUB_OUTPUT"
+          echo "BODYEOF" >> "$GITHUB_OUTPUT"
+
+  implement:
+    needs: check-trigger
+    if: needs.check-trigger.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create implementation issue in target repo
+        id: create-issue
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+        run: |
+          TARGET_REPO="${{ needs.check-trigger.outputs.target_repo }}"
+          BODY=$(cat <<IMPLEOF
+          ## Implementation Request (from research)
+
+          ### Research Findings
+          ${{ needs.check-trigger.outputs.research_body }}
+
+          ### User Instructions
+          ${{ needs.check-trigger.outputs.instructions }}
+          IMPLEOF
+          )
+
+          ISSUE_URL=$(gh issue create \
+            --repo "$TARGET_REPO" \
+            --title "OpenHands: implement research findings" \
+            --body "$BODY" \
+            --label "openhands")
+
+          ISSUE_NUM=$(echo "$ISSUE_URL" | grep -oE '[0-9]+$')
+          echo "issue_number=$ISSUE_NUM" >> "$GITHUB_OUTPUT"
+          echo "issue_url=$ISSUE_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Label implementation issue for OpenHands
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+        run: |
+          TARGET_REPO="${{ needs.check-trigger.outputs.target_repo }}"
+          gh issue edit ${{ steps.create-issue.outputs.issue_number }} \
+            --repo "$TARGET_REPO" \
+            --add-label "fix-me"
+
+      - name: Wait for OpenHands to create PR
+        id: wait-pr
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+        run: |
+          TARGET_REPO="${{ needs.check-trigger.outputs.target_repo }}"
+          ISSUE_NUM="${{ steps.create-issue.outputs.issue_number }}"
+
+          for i in $(seq 1 60); do
+            PR_URL=$(gh pr list \
+              --repo "$TARGET_REPO" \
+              --search "OpenHands" \
+              --json url,title,additions,deletions,changedFiles \
+              --jq '.[0] | "\(.url)|\(.title)|\(.additions)|\(.deletions)|\(.changedFiles)"' \
+              2>/dev/null || echo "")
+
+            if [ -n "$PR_URL" ] && [ "$PR_URL" != "null" ]; then
+              echo "pr_info=$PR_URL" >> "$GITHUB_OUTPUT"
+              break
+            fi
+            sleep 30
+          done
+
+      - name: Close research issue
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+        run: |
+          gh issue close ${{ github.event.issue.number }} \
+            --repo ${{ github.repository }} \
+            --comment "Implementation triggered. See target repo for PR."
+          gh issue edit ${{ github.event.issue.number }} \
+            --repo ${{ github.repository }} \
+            --add-label "implemented"
+
+      - name: Notify Telegram
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          PR_INFO="${{ steps.wait-pr.outputs.pr_info }}"
+          if [ -n "$PR_INFO" ]; then
+            PR_URL=$(echo "$PR_INFO" | cut -d'|' -f1)
+            PR_TITLE=$(echo "$PR_INFO" | cut -d'|' -f2)
+            ADDITIONS=$(echo "$PR_INFO" | cut -d'|' -f3)
+            DELETIONS=$(echo "$PR_INFO" | cut -d'|' -f4)
+            CHANGED=$(echo "$PR_INFO" | cut -d'|' -f5)
+            MSG=$(cat <<MSGEOF
+          PR Created: ${{ needs.check-trigger.outputs.target_repo }}
+          Title: ${PR_TITLE}
+
+          What was implemented:
+          ${{ needs.check-trigger.outputs.instructions }}
+
+          PR: ${PR_URL}
+          Diff: +${ADDITIONS} / -${DELETIONS} across ${CHANGED} files
+          MSGEOF
+            )
+          else
+            MSG="Implementation triggered for ${{ needs.check-trigger.outputs.target_repo }} but no PR detected yet. Check the target repo manually."
+          fi
+
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n \
+              --arg chat_id "$TELEGRAM_CHAT_ID" \
+              --arg text "$MSG" \
+              '{chat_id: $chat_id, text: $text}'
+            )"

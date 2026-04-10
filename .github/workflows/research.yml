@@ -1,0 +1,124 @@
+name: Nightly Research
+
+on:
+  schedule:
+    - cron: "30 12 * * *"  # 12:30 UTC = 18:00 IST
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  load-config:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.parse.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PyYAML
+        run: pip install PyYAML
+
+      - name: Parse projects config
+        id: parse
+        run: |
+          MATRIX=$(python scripts/parse_config.py)
+          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+
+  research:
+    needs: load-config
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        project: ${{ fromJson(needs.load-config.outputs.matrix) }}
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run research
+        env:
+          TARGET_REPO: ${{ matrix.project.repo }}
+          SOURCES: ${{ matrix.project.sources }}
+          PRIORITY: ${{ matrix.project.priority }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
+          RESEARCH_OUTPUT: /tmp/research_output.md
+        run: |
+          if [ "${{ matrix.project.mode }}" = "release-monitor" ]; then
+            python scripts/research_release_monitor.py
+          else
+            python scripts/research_codebase_analysis.py
+          fi
+
+      - name: Create GitHub Issue
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+        run: |
+          REPO_NAME=$(echo "${{ matrix.project.repo }}" | cut -d'/' -f2)
+          DATE=$(date -u +%Y-%m-%d)
+          MODE="${{ matrix.project.mode }}"
+          FINDINGS=$(cat /tmp/research_output.md)
+          BODY=$(cat <<HEREDOC
+          ## Research Report: ${REPO_NAME}
+          **Mode:** ${MODE}
+          **Date:** ${DATE}
+          **Target:** ${{ matrix.project.repo }}
+
+          ---
+
+          ${FINDINGS}
+
+          ---
+
+          *Reply with your instructions: what to implement, skip, or modify.*
+          *Tag items by number, e.g., "Implement 1 and 3, skip 2"*
+          HEREDOC
+          )
+
+          ISSUE_URL=$(gh issue create \
+            --repo "${{ github.repository }}" \
+            --title "Research: ${REPO_NAME} — ${DATE}" \
+            --body "$BODY" \
+            --label "research,${REPO_NAME},${MODE}")
+
+          echo "ISSUE_URL=$ISSUE_URL" >> "$GITHUB_ENV"
+
+      - name: Commit state updates
+        run: |
+          git config user.name "openhands-orchestrator"
+          git config user.email "openhands-orchestrator@users.noreply.github.com"
+          git add .state/ 2>/dev/null || true
+          git diff --cached --quiet || git commit -m "chore: update research state for ${{ matrix.project.repo }}"
+          git push || true
+
+      - name: Notify Telegram
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          REPO_NAME=$(echo "${{ matrix.project.repo }}" | cut -d'/' -f2)
+          MODE="${{ matrix.project.mode }}"
+          COUNT=$(grep -cE '^[0-9]+\.' /tmp/research_output.md 2>/dev/null || echo "0")
+          MSG=$(cat <<MSGEOF
+          Research Report: ${REPO_NAME}
+          Mode: ${MODE}
+          Findings: ${COUNT} items detected
+
+          $(head -30 /tmp/research_output.md)
+
+          Review & reply: ${ISSUE_URL}
+          MSGEOF
+          )
+          bash scripts/notify_telegram.sh "$MSG"
