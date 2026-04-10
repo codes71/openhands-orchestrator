@@ -1,0 +1,12 @@
+# Central config for all monitored projects
+# Modes:
+#   release-monitor (D) — watch upstream releases/docs, suggest features
+#   codebase-analysis (C) — analyze deps, tests, security, performance, refactoring
+
+projects:
+  - repo: codes71/claude-panel
+    mode: release-monitor
+    sources:
+      - repo: anthropics/claude-code
+      - url: https://docs.anthropic.com/en/docs/changelog
+    priority: [deps, tests, security, performance, refactoring]
