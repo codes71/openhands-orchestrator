@@ -17,17 +17,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
       - name: Install PyYAML
-        run: pip install PyYAML
+        run: pip install --quiet PyYAML
 
       - name: Parse projects config
         id: parse
         run: |
-          MATRIX=$(python scripts/parse_config.py)
+          MATRIX=$(python3 scripts/parse_config.py)
           echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
 
   research:
@@ -40,12 +36,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install --quiet -r requirements.txt
 
       - name: Run research
         env:
@@ -57,9 +49,9 @@ jobs:
           RESEARCH_OUTPUT: /tmp/research_output.md
         run: |
           if [ "${{ matrix.project.mode }}" = "release-monitor" ]; then
-            python scripts/research_release_monitor.py
+            python3 scripts/research_release_monitor.py
           else
-            python scripts/research_codebase_analysis.py
+            python3 scripts/research_codebase_analysis.py
           fi
 
       - name: Create GitHub Issue
