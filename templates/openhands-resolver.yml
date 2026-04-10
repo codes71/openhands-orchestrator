@@ -1,0 +1,29 @@
+# Copy this file to .github/workflows/openhands-resolver.yml in your target repo.
+# Required secrets: LLM_API_KEY, PAT_TOKEN, PAT_USERNAME
+
+name: OpenHands Issue Resolver
+
+on:
+  issues:
+    types: [labeled]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  call-openhands-resolver:
+    uses: All-Hands-AI/OpenHands/.github/workflows/openhands-resolver.yml@main
+    with:
+      macro: "@openhands-agent"
+      max_iterations: 50
+      target_branch: main
+      pr_type: draft
+      LLM_MODEL: "anthropic/claude-sonnet-4-20250514"
+    secrets:
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+      PAT_USERNAME: ${{ secrets.PAT_USERNAME }}
