@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   check-trigger:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     outputs:
       should_run: ${{ steps.check.outputs.should_run }}
       target_repo: ${{ steps.check.outputs.target_repo }}
@@ -57,7 +57,7 @@ jobs:
   implement:
     needs: check-trigger
     if: needs.check-trigger.outputs.should_run == 'true'
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     steps:
       - name: Create implementation issue in target repo
         id: create-issue

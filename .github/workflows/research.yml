@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   load-config:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.parse.outputs.matrix }}
     steps:
@@ -28,7 +28,7 @@ jobs:
 
   research:
     needs: load-config
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     strategy:
       matrix:
         project: ${{ fromJson(needs.load-config.outputs.matrix) }}
@@ -39,19 +39,12 @@ jobs:
       - name: Install dependencies
         run: pip install --quiet -r requirements.txt
 
-      - name: Load Claude Code token
-        id: token
-        run: |
-          TOKEN=$(python3 -c "import json; d=json.load(open('$HOME/.claude/.credentials.json')); print(d['claudeAiOauth']['accessToken'])")
-          echo "::add-mask::$TOKEN"
-          echo "api_key=$TOKEN" >> "$GITHUB_OUTPUT"
-
       - name: Run research
         env:
           TARGET_REPO: ${{ matrix.project.repo }}
           SOURCES: ${{ matrix.project.sources }}
           PRIORITY: ${{ matrix.project.priority }}
-          ANTHROPIC_API_KEY: ${{ steps.token.outputs.api_key }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
           RESEARCH_OUTPUT: /tmp/research_output.md
         run: |
