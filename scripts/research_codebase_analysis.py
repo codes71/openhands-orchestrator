@@ -8,6 +8,7 @@ import json
 import os
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 import anthropic
@@ -120,11 +121,22 @@ def synthesize_findings(analysis_data: dict[str, str], repo: str) -> str:
     prompt = prompt_template.replace("{analysis_data}", formatted_data)
 
     client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
-    response = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=4096,
-        messages=[{"role": "user", "content": prompt}],
-    )
+
+    # Retry with backoff for rate limits
+    for attempt in range(5):
+        try:
+            response = client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=4096,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            break
+        except anthropic.RateLimitError:
+            wait = 30 * (attempt + 1)
+            print(f"Rate limited, waiting {wait}s (attempt {attempt + 1}/5)")
+            time.sleep(wait)
+    else:
+        return "Research failed: rate limit exceeded after 5 attempts. Will retry next run."
 
     return response.content[0].text
 

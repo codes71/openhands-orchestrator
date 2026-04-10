@@ -8,6 +8,7 @@ outputs structured findings as markdown.
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 import anthropic
@@ -114,11 +115,22 @@ def run_research(
     prompt = prompt.replace("{target_readme}", target_readme)
 
     client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
-    response = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=4096,
-        messages=[{"role": "user", "content": prompt}],
-    )
+
+    # Retry with backoff for rate limits
+    for attempt in range(5):
+        try:
+            response = client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=4096,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            break
+        except anthropic.RateLimitError:
+            wait = 30 * (attempt + 1)
+            print(f"Rate limited, waiting {wait}s (attempt {attempt + 1}/5)")
+            time.sleep(wait)
+    else:
+        return "Research failed: rate limit exceeded after 5 attempts. Will retry next run."
 
     findings = response.content[0].text
 
