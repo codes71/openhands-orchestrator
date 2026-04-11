@@ -45,6 +45,7 @@ jobs:
           SOURCES: ${{ matrix.project.sources }}
           PRIORITY: ${{ matrix.project.priority }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
           RESEARCH_OUTPUT: /tmp/research_output.md
         run: |

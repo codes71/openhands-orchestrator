@@ -12,6 +12,8 @@ import time
 from pathlib import Path
 
 import anthropic
+import posthog
+from posthog.ai.anthropic import Anthropic
 import requests
 
 
@@ -114,7 +116,11 @@ def run_research(
     prompt = prompt_template.replace("{upstream_content}", upstream_content)
     prompt = prompt.replace("{target_readme}", target_readme)
 
-    client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    # Init PostHog for LLM monitoring
+    posthog.api_key = os.environ.get("POSTHOG_API_KEY", "")
+    posthog.host = "https://us.i.posthog.com"
+
+    client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
     # Retry with backoff for rate limits
     for attempt in range(5):
@@ -123,6 +129,8 @@ def run_research(
                 model="claude-sonnet-4-20250514",
                 max_tokens=4096,
                 messages=[{"role": "user", "content": prompt}],
+                posthog_distinct_id=f"orchestrator:{target_repo}",
+                posthog_properties={"mode": "release-monitor", "repo": target_repo},
             )
             break
         except anthropic.RateLimitError:
@@ -152,6 +160,8 @@ def main():
     output_path = Path(os.environ.get("RESEARCH_OUTPUT", "/tmp/research_output.md"))
     output_path.write_text(findings)
     print(findings)
+
+    posthog.flush()
 
 
 if __name__ == "__main__":

@@ -12,6 +12,8 @@ import time
 from pathlib import Path
 
 import anthropic
+import posthog
+from posthog.ai.anthropic import Anthropic
 
 
 def clone_repo(repo: str, token: str | None = None) -> Path:
@@ -120,7 +122,11 @@ def synthesize_findings(analysis_data: dict[str, str], repo: str) -> str:
     )
     prompt = prompt_template.replace("{analysis_data}", formatted_data)
 
-    client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    # Init PostHog for LLM monitoring
+    posthog.api_key = os.environ.get("POSTHOG_API_KEY", "")
+    posthog.host = "https://us.i.posthog.com"
+
+    client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
     # Retry with backoff for rate limits
     for attempt in range(5):
@@ -129,6 +135,8 @@ def synthesize_findings(analysis_data: dict[str, str], repo: str) -> str:
                 model="claude-sonnet-4-20250514",
                 max_tokens=4096,
                 messages=[{"role": "user", "content": prompt}],
+                posthog_distinct_id=f"orchestrator:{repo}",
+                posthog_properties={"mode": "codebase-analysis", "repo": repo},
             )
             break
         except anthropic.RateLimitError:
@@ -153,6 +161,8 @@ def main():
     output_path = Path(os.environ.get("RESEARCH_OUTPUT", "/tmp/research_output.md"))
     output_path.write_text(findings)
     print(findings)
+
+    posthog.flush()
 
 
 if __name__ == "__main__":
