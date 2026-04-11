@@ -108,10 +108,10 @@ jobs:
               --repo "$TARGET_REPO" \
               --search "OpenHands" \
               --json url,title,additions,deletions,changedFiles \
-              --jq '.[0] | "\(.url)|\(.title)|\(.additions)|\(.deletions)|\(.changedFiles)"' \
+              --jq 'if length > 0 then .[0] | "\(.url)|\(.title)|\(.additions)|\(.deletions)|\(.changedFiles)" else "" end' \
               2>/dev/null || echo "")
 
-            if [ -n "$PR_URL" ] && [ "$PR_URL" != "null" ]; then
+            if [ -n "$PR_URL" ]; then
               echo "pr_info=$PR_URL" >> "$GITHUB_OUTPUT"
               break
             fi
